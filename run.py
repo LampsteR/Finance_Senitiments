@@ -10,13 +10,31 @@ LABEL_NAMES = ["negative", "neutral", "positive"]
 def load_model(checkpoint_dir: Path):
     base_model_name = "ProsusAI/finbert"
     tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        base_model_name,
-        num_labels=len(LABEL_NAMES),
-        torch_dtype=torch.float16,
-        device_map="auto",
-        load_in_4bit=True,
-    )
+    
+    # Try to use bitsandbytes if available, otherwise use regular loading
+    try:
+        from transformers import BitsAndBytesConfig
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16
+        )
+        model = AutoModelForSequenceClassification.from_pretrained(
+            base_model_name,
+            num_labels=len(LABEL_NAMES),
+            quantization_config=bnb_config,
+            device_map="auto",
+        )
+    except (ImportError, Exception):
+        # Fallback to regular loading without quantization
+        print("Warning: bitsandbytes not available, loading model without quantization")
+        model = AutoModelForSequenceClassification.from_pretrained(
+            base_model_name,
+            num_labels=len(LABEL_NAMES),
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            device_map="auto" if torch.cuda.is_available() else None,
+        )
+    
     model = PeftModel.from_pretrained(model, checkpoint_dir)
     model.eval()
     return tokenizer, model
